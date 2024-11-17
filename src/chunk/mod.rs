@@ -4,7 +4,6 @@
 
     pub struct ChunkManager {
         chunk_size: usize,
-        compression_enabled: bool,
     }
 
     pub const DEFAULT_CHUNK_SIZE: usize = 1024 * 1024;
@@ -13,7 +12,6 @@
         fn default() -> Self {
             Self {
                 chunk_size: DEFAULT_CHUNK_SIZE,
-                compression_enabled: true
             }
         }
     }

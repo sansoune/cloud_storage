@@ -9,6 +9,7 @@ async-trait = "0.1.83"
 blake3 = "1.5.4"
 chrono = {version = "0.4.38", features = ["serde"] }
 clap = {version = "4.5.20", features = ["derive"] }
+flate2 = "1.0.35"
 hex = "0.4.3"
 infer = "0.16.0"
 lru = "0.12.5"

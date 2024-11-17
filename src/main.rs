@@ -37,7 +37,7 @@ enum Commands {
 #[tokio::main]
 async fn main() -> Result<()> {
     let cli = Cli::parse();
-    let storage = DiskStorage::new("./storage").await?.with_encryption([0u8; 32]).with_cache(100);
+    let storage = DiskStorage::new("./storage").await?.with_encryption([0u8; 32]).with_cache(100).with_compression(true);
 
     match cli.command {
         Commands::Upload { file } => {

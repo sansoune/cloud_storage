@@ -7,7 +7,7 @@ use sha2::{Sha256, Digest};
 use uuid::Uuid;
 use chrono::Utc;
 
-use super::cache::CacheManager;
+use super::{cache::CacheManager, compression::CompressionManager};
 
 #[async_trait]
 pub trait StorageBackend: Send + Sync {
@@ -23,6 +23,7 @@ pub struct DiskStorage {
     chunker: FileChunker,
     encryption: Option<EncryptionConfig>,
     cache: Option<CacheManager>,
+    compression: Option<CompressionManager>,
 }
 
 impl DiskStorage {
@@ -36,7 +37,7 @@ impl DiskStorage {
         fs::create_dir_all(&chunks_path).await?;
 
         let chunker = FileChunker::new(ChunkManager::default());
-        Ok(Self {base_path, metadata_path, chunks_path, chunker, encryption: None, cache: None} )
+        Ok(Self {base_path, metadata_path, chunks_path, chunker, encryption: None, cache: None, compression: None} )
     }
 
     pub fn with_encryption(mut self, key: [u8; 32]) -> Self {
@@ -48,6 +49,12 @@ impl DiskStorage {
         self.cache = Some(CacheManager::new(cache_size));
         self
     }
+
+    pub fn with_compression(mut self, enabled: bool) -> Self {
+        self.compression = Some(CompressionManager::new(enabled));
+        self
+    }
+
 
     fn get_chunk_path(&self, chunk_id: &ChunkId) -> PathBuf {
         self.chunks_path.join(chunk_id.0.to_string())
@@ -76,7 +83,7 @@ impl DiskStorage {
             FileType::Document(_) => {
                 // Document processing logic
                 // For example, text extraction, metadata parsing
-                Ok(data.to_vec())
+                self.process_data(data).await
             },
             FileType::Video(_) => {
                 // Video processing logic
@@ -88,8 +95,66 @@ impl DiskStorage {
                 // For example, format conversion, metadata extraction
                 Ok(data.to_vec())
             },
-            FileType::Unknown => Ok(data.to_vec()),
+            FileType::Unknown => self.process_data(data).await,
         }
+    }
+
+    async fn deprocess_file_by_type(&self, file_type: FileType, data: &[u8]) -> Result<Vec<u8>> {
+        match file_type {
+            FileType::Image(_) => {
+                // Here you could add image deprocessing logic
+                // For example, resizing, compression, format conversion
+                Ok(data.to_vec())
+            },
+            FileType::Document(_) => {
+                // Document deprocessing logic
+                // For example, text extraction, metadata parsing
+                self.process_data(data).await
+            },
+            FileType::Video(_) => {
+                // Video deprocessing logic
+                // For example, thumbnail generation, transcoding
+                Ok(data.to_vec())
+            },
+            FileType::Audio(_) => {
+                // Audio deprocessing logic
+                // For example, format conversion, metadata extraction
+                Ok(data.to_vec())
+            },
+            FileType::Unknown => self.deprocess_data(data).await,
+        }
+    }
+
+    async fn process_data(&self, data: &[u8]) -> Result<Vec<u8>> {
+        let compressed_data = if let Some(compression) = &self.compression {
+            compression.compress(data)?
+        }else {
+            data.to_vec()
+        };
+
+        let encrypted_data = if let Some(encryption) = &self.encryption {
+            encryption.encrypt(&compressed_data)?
+        }else {
+            compressed_data
+        };
+
+        Ok(encrypted_data)
+    }
+
+    pub async fn deprocess_data(&self, data: &[u8]) -> Result<Vec<u8>> {
+        let decrypted_data = if let Some(encryption) = &self.encryption {
+            encryption.decrypt(data)?
+        } else {
+            data.to_vec()
+        };
+
+        let decompressed_data = if let Some(compression) = &self.compression {
+            compression.decompress(&decrypted_data)?
+        } else {
+            decrypted_data
+        };
+
+        Ok(decompressed_data)
     }
     
     async fn is_chunk_used_by_others(&self, chunk_id: &ChunkId, current_file_id: &Uuid) -> Result<bool> {
@@ -206,13 +271,9 @@ impl StorageBackend for DiskStorage {
         let id = Uuid::new_v4();
         let file_type = FileTypeDetector::detect(data);
         
-        let processed_data = self.process_file_by_type(file_type.clone(), data).await?;
+        let final_data = self.process_file_by_type(file_type.clone(), data).await?;
 
-        let final_data = if let Some(encryption) = &self.encryption {
-            encryption.encrypt(&processed_data)?
-        }else {
-            processed_data
-        };
+        
 
         let chunks = self.chunker.chunk_data(&final_data);
         let chunk_ids = self.store_chunks(chunks).await?;
@@ -262,11 +323,7 @@ impl StorageBackend for DiskStorage {
             data.extend(chunk_data);
         }
 
-        let final_data = if let Some(encryption) = &self.encryption {
-            encryption.decrypt(&data)?
-        } else {
-            data
-        };
+        let final_data = self.deprocess_file_by_type(metadata.file_type, &data).await?;
 
         if let Some(cache) = &self.cache {
             cache.put(*id, final_data.clone()).await; // Store the data in cache
