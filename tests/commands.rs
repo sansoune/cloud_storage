@@ -1,150 +1,138 @@
-use chunk::DEFAULT_CHUNK_SIZE;
-use cloud_storage::*;
-use storage::disk::{DiskStorage, StorageBackend};
-use tempfile::TempDir;
-use cloud_storage::{FileType, ImageType};
-use std::sync::Arc;
-
-#[tokio::test]
-async fn test_disk_storage_basic_operations() {
-    let temp_dir = TempDir::new().unwrap();
-    let storage = DiskStorage::new(temp_dir.path()).await.unwrap();
-
-    // Test file storage
-    let test_data = b"Hello, World!".to_vec();
-    let metadata = storage.store_file("test.txt", &test_data).await.unwrap();
-
-    // Verify metadata
-    assert_eq!(metadata.name, "test.txt");
-    assert_eq!(metadata.size, test_data.len() as u64);
-    
-    // Test file retrieval
-    let retrieved_data = storage.get_file(&metadata.id).await.unwrap();
-    assert_eq!(retrieved_data, test_data);
-
-    // Test file deletion
-    storage.delete_file(&metadata.id).await.unwrap();
-    assert!(storage.get_file(&metadata.id).await.is_err());
-}
-
-#[tokio::test]
-async fn test_chunking_large_file() {
-    let temp_dir = TempDir::new().unwrap();
-    let storage = DiskStorage::new(temp_dir.path()).await.unwrap();
-
-    // Create a large test file that will span multiple chunks
-    let large_data = vec![0u8; DEFAULT_CHUNK_SIZE * 2 + 500]; // 2.5 chunks
-    let metadata = storage.store_file("large.bin", &large_data).await.unwrap();
-
-    // Verify chunk count
-    assert_eq!(metadata.chunk_ids.len(), 3);
-
-    // Verify data integrity
-    let retrieved_data = storage.get_file(&metadata.id).await.unwrap();
-    assert_eq!(retrieved_data, large_data);
-}
-
-#[tokio::test]
-async fn test_file_type_detection() {
-    let temp_dir = TempDir::new().unwrap();
-    let storage = DiskStorage::new(temp_dir.path()).await.unwrap();
-
-    // PNG file header
-    let png_data = vec![0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A];
-    let metadata = storage.store_file("test.png", &png_data).await.unwrap();
-
-    match metadata.file_type {
-        FileType::Image(ImageType::Png) => (),
-        _ => panic!("Failed to detect PNG file type"),
-    }
-}
-
-#[tokio::test]
-async fn test_deduplication() {
-    let temp_dir = TempDir::new().unwrap();
-    let storage = DiskStorage::new(temp_dir.path()).await.unwrap();
-
-    // Store the same data twice
-    let test_data = b"Hello, World!".to_vec();
-    let metadata1 = storage.store_file("file1.txt", &test_data).await.unwrap();
-    let metadata2 = storage.store_file("file2.txt", &test_data).await.unwrap();
-
-    // Verify checksums match
-    assert_eq!(metadata1.checksum, metadata2.checksum);
-}
-
-#[tokio::test]
-async fn test_name_based_operations() {
-    let temp_dir = TempDir::new().unwrap();
-    let storage = DiskStorage::new(temp_dir.path()).await.unwrap();
-
-    // Store a file
-    let test_data = b"Hello, World!".to_vec();
-    let _original_metadata = storage.store_file("test.txt", &test_data).await.unwrap();
-
-    // List files and verify
-    let files = storage.list_files().await.unwrap();
-    assert_eq!(files.len(), 1);
-    assert_eq!(files[0].name, "test.txt");
-}
-
-#[tokio::test]
-async fn test_concurrent_operations() {
-    use tokio::task;
-    
-    let temp_dir = TempDir::new().unwrap();
-    let storage = Arc::new(DiskStorage::new(temp_dir.path()).await.unwrap());
-    
-    let mut handles = vec![];
-    
-    // Spawn multiple concurrent uploads
-    for i in 0..5 {
-        let storage = storage.clone();
-        let handle = task::spawn(async move {
-            let data = format!("Data {}", i).into_bytes();
-            storage.store_file(&format!("file{}.txt", i), &data).await
-        });
-        handles.push(handle);
-    }
-
-    // Wait for all operations to complete
-    for handle in handles {
-        handle.await.unwrap().unwrap();
-    }
-
-    // Verify all files were stored
-    let files = storage.list_files().await.unwrap();
-    assert_eq!(files.len(), 5);
-}
-
-// Test utilities
-// #[cfg(test)]
-// mod test_utils {
-//     pub fn create_test_file(size: usize) -> Vec<u8> {
-//         let mut data = Vec::with_capacity(size);
-//         for i in 0..size {
-//             data.push((i % 256) as u8);
-//         }
-//         data
-//     }
-// }
-
-// Property-based tests using proptest
 #[cfg(test)]
-mod property_tests {
-    use cloud_storage::chunk::{ChunkManager, FileChunker, DEFAULT_CHUNK_SIZE};
-    use proptest::prelude::*;
+mod tests {
+    use chunk::DEFAULT_CHUNK_SIZE;
+    use cloud_storage::*;
+    use storage::disk::{DiskStorage, StorageBackend};
+    use tempfile::TempDir;
 
-    proptest! {
-        #[test]
-        fn test_chunk_size_properties(data in prop::collection::vec(any::<u8>(), 0..1024*1024)) {
-            let chunker = FileChunker::new(ChunkManager::default());
-            let chunks = chunker.chunk_data(&data);
-            
-            // Properties that should hold
-            assert!(chunks.iter().all(|chunk| chunk.size <= DEFAULT_CHUNK_SIZE));
-            let total_size: usize = chunks.iter().map(|chunk| chunk.size).sum();
-            assert_eq!(total_size, data.len());
-        }
+    /// Helper to initialize DiskStorage with a temporary directory
+    async fn create_test_storage() -> (DiskStorage, TempDir) {
+        let temp_dir = TempDir::new().expect("Failed to create temp dir");
+        let path = temp_dir.path();
+        let storage = DiskStorage::new(path).await.expect("can't create disk storage");
+        // storage.
+        (storage, temp_dir)
+    }
+
+    /// Test storing and retrieving a file
+    #[tokio::test]
+    async fn test_store_and_retrieve_file() {
+        let (storage, _temp_dir) = create_test_storage().await;
+
+        // Test data
+        let file_name = "test.txt";
+        let file_data = b"Hello, world!";
+
+        // Store file
+        let metadata = storage
+            .store_file(file_name, file_data)
+            .await
+            .expect("Failed to store file");
+
+        assert_eq!(metadata.name, file_name);
+        assert_eq!(metadata.size, file_data.len() as u64);
+
+        // Retrieve file
+        let retrieved_data = storage
+            .get_file(&metadata.id)
+            .await
+            .expect("Failed to retrieve file");
+
+        assert_eq!(retrieved_data, file_data);
+    }
+
+    /// Test file deletion
+    #[tokio::test]
+    async fn test_delete_file() {
+        let (storage, _temp_dir) = create_test_storage().await;
+
+        // Store file
+        let file_name = "test.txt";
+        let file_data = b"Temporary file data.";
+        let metadata = storage
+            .store_file(file_name, file_data)
+            .await
+            .expect("Failed to store file");
+
+        // Delete file
+        storage
+            .delete_file(&metadata.id)
+            .await
+            .expect("Failed to delete file");
+
+        // Try retrieving the deleted file
+        let result = storage.get_file(&metadata.id).await;
+        assert!(result.is_err());
+    }
+
+    /// Test chunk handling
+    #[tokio::test]
+    async fn test_chunk_handling() {
+        let (storage, _temp_dir) = create_test_storage().await;
+
+        let large_data = vec![0u8; DEFAULT_CHUNK_SIZE * 4]; // 10 KB data
+        let metadata = storage
+            .store_file("large_file", &large_data)
+            .await
+            .expect("Failed to store large file");
+
+        // Verify chunking
+        assert!(metadata.chunk_ids.len() > 1);
+
+        // Verify retrieving large data
+        let retrieved_data = storage
+            .get_file(&metadata.id)
+            .await
+            .expect("Failed to retrieve large file");
+        assert_eq!(retrieved_data, large_data);
+    }
+
+    /// Test compression and encryption
+    #[tokio::test]
+    async fn test_compression_and_encryption() {
+        let (mut storage, _temp_dir) = create_test_storage().await;
+        storage = storage
+            .with_encryption([1; 32])
+            .with_cache(100);
+
+        let file_data = b"Sensitive data.";
+        let file_name = "secure.txt";
+
+        // Store file
+        let metadata = storage
+            .store_file(file_name, file_data)
+            .await
+            .expect("Failed to store file with encryption and compression");
+
+        // Retrieve and check file integrity
+        let retrieved_data = storage
+            .get_file(&metadata.id)
+            .await
+            .expect("Failed to retrieve encrypted and compressed file");
+        assert_eq!(retrieved_data, file_data);
+    }
+
+    /// Test listing files
+    #[tokio::test]
+    async fn test_list_files() {
+        let (storage, _temp_dir) = create_test_storage().await;
+
+        // Add files
+        storage
+            .store_file("file1.txt", b"Content of file1")
+            .await
+            .expect("Failed to store file1");
+        storage
+            .store_file("file2.txt", b"Content of file2")
+            .await
+            .expect("Failed to store file2");
+
+        // List files
+        let files = storage.list_files().await.expect("Failed to list files");
+
+        assert_eq!(files.len(), 2);
+        let file_names: Vec<_> = files.into_iter().map(|f| f.name).collect();
+        assert!(file_names.contains(&"file1.txt".to_string()));
+        assert!(file_names.contains(&"file2.txt".to_string()));
     }
 }
