@@ -1,13 +1,23 @@
-use std::{collections::{HashMap, HashSet}, path::{Path, PathBuf}};
-use tokio::fs;
+use crate::{
+    chunk::{ChunkManager, FileChunker},
+    crypto::encryption::EncryptionConfig,
+};
+use crate::{Chunk, ChunkId, FileMetadata, FileType, FileTypeDetector, Result, StorageError};
 use async_trait::async_trait;
-use crate::{chunk::{ChunkManager, FileChunker}, crypto::encryption::EncryptionConfig};
-use crate::{Result, StorageError, Chunk, ChunkId, FileType, FileTypeDetector, FileMetadata};
-use sha2::{Sha256, Digest};
-use uuid::Uuid;
 use chrono::Utc;
+use sha2::{Digest, Sha256};
+use std::{
+    collections::{HashMap, HashSet},
+    path::{Path, PathBuf},
+};
+use tokio::fs;
+use uuid::Uuid;
 
-use super::{cache::CacheManager, compression::CompressionManager};
+use super::{
+    cache::CacheManager,
+    compression::CompressionManager,
+    retry::{with_retry, RetryConfig},
+};
 
 #[async_trait]
 pub trait StorageBackend: Send + Sync {
@@ -24,6 +34,7 @@ pub struct DiskStorage {
     encryption: Option<EncryptionConfig>,
     cache: Option<CacheManager>,
     compression: Option<CompressionManager>,
+    retry_config: RetryConfig,
 }
 
 impl DiskStorage {
@@ -37,7 +48,16 @@ impl DiskStorage {
         fs::create_dir_all(&chunks_path).await?;
 
         let chunker = FileChunker::new(ChunkManager::default());
-        Ok(Self {base_path, metadata_path, chunks_path, chunker, encryption: None, cache: None, compression: None} )
+        Ok(Self {
+            base_path,
+            metadata_path,
+            chunks_path,
+            chunker,
+            encryption: None,
+            cache: None,
+            compression: None,
+            retry_config: RetryConfig::default(),
+        })
     }
 
     pub fn with_encryption(mut self, key: [u8; 32]) -> Self {
@@ -55,21 +75,19 @@ impl DiskStorage {
         self
     }
 
-
     fn get_chunk_path(&self, chunk_id: &ChunkId) -> PathBuf {
         self.chunks_path.join(chunk_id.0.to_string())
     }
 
     async fn store_chunks(&self, chunks: Vec<Chunk>) -> Result<Vec<ChunkId>> {
         let mut chunk_ids = Vec::new();
-        
-        
+
         for chunk in chunks {
             let chunk_path = self.get_chunk_path(&chunk.id);
             fs::write(&chunk_path, &chunk.data).await?;
             chunk_ids.push(chunk.id);
         }
-        
+
         Ok(chunk_ids)
     }
 
@@ -79,22 +97,22 @@ impl DiskStorage {
                 // Here you could add image processing logic
                 // For example, resizing, compression, format conversion
                 Ok(data.to_vec())
-            },
+            }
             FileType::Document(_) => {
                 // Document processing logic
                 // For example, text extraction, metadata parsing
                 self.process_data(data).await
-            },
+            }
             FileType::Video(_) => {
                 // Video processing logic
                 // For example, thumbnail generation, transcoding
                 Ok(data.to_vec())
-            },
+            }
             FileType::Audio(_) => {
                 // Audio processing logic
                 // For example, format conversion, metadata extraction
                 Ok(data.to_vec())
-            },
+            }
             FileType::Unknown => self.process_data(data).await,
         }
     }
@@ -105,22 +123,22 @@ impl DiskStorage {
                 // Here you could add image deprocessing logic
                 // For example, resizing, compression, format conversion
                 Ok(data.to_vec())
-            },
+            }
             FileType::Document(_) => {
                 // Document deprocessing logic
                 // For example, text extraction, metadata parsing
                 self.process_data(data).await
-            },
+            }
             FileType::Video(_) => {
                 // Video deprocessing logic
                 // For example, thumbnail generation, transcoding
                 Ok(data.to_vec())
-            },
+            }
             FileType::Audio(_) => {
                 // Audio deprocessing logic
                 // For example, format conversion, metadata extraction
                 Ok(data.to_vec())
-            },
+            }
             FileType::Unknown => self.deprocess_data(data).await,
         }
     }
@@ -128,13 +146,13 @@ impl DiskStorage {
     async fn process_data(&self, data: &[u8]) -> Result<Vec<u8>> {
         let compressed_data = if let Some(compression) = &self.compression {
             compression.compress(data)?
-        }else {
+        } else {
             data.to_vec()
         };
 
         let encrypted_data = if let Some(encryption) = &self.encryption {
             encryption.encrypt(&compressed_data)?
-        }else {
+        } else {
             compressed_data
         };
 
@@ -156,8 +174,12 @@ impl DiskStorage {
 
         Ok(decompressed_data)
     }
-    
-    async fn is_chunk_used_by_others(&self, chunk_id: &ChunkId, current_file_id: &Uuid) -> Result<bool> {
+
+    async fn is_chunk_used_by_others(
+        &self,
+        chunk_id: &ChunkId,
+        current_file_id: &Uuid,
+    ) -> Result<bool> {
         let mut entries = fs::read_dir(&self.metadata_path).await?;
         while let Some(entry) = entries.next_entry().await? {
             if entry.file_type().await?.is_file() {
@@ -165,10 +187,13 @@ impl DiskStorage {
                     if ext == "json" {
                         let metadata_content = fs::read_to_string(entry.path()).await?;
                         let metadata: FileMetadata = serde_json::from_str(&metadata_content)
-                            .map_err(|e| StorageError::Storage(format!("Failed to parse metadata: {}", e)))?;
-                        
+                            .map_err(|e| {
+                                StorageError::Storage(format!("Failed to parse metadata: {}", e))
+                            })?;
+
                         // Skip the current file being deleted
-                        if metadata.id != *current_file_id && metadata.chunk_ids.contains(chunk_id) {
+                        if metadata.id != *current_file_id && metadata.chunk_ids.contains(chunk_id)
+                        {
                             return Ok(true);
                         }
                     }
@@ -177,7 +202,7 @@ impl DiskStorage {
         }
         Ok(false)
     }
-    
+
     async fn cleanup_orphaned_chunks(&self) -> Result<()> {
         // Get all existing chunk files
         let mut chunk_files = HashSet::new();
@@ -233,7 +258,7 @@ impl DiskStorage {
         let mut index: HashMap<String, Uuid> = if index_path.exists() {
             let content = fs::read_to_string(&index_path).await?;
             serde_json::from_str(&content).unwrap_or_default()
-        }else {
+        } else {
             HashMap::new()
         };
 
@@ -254,7 +279,9 @@ impl DiskStorage {
                     if ext == "json" {
                         let metadata_content = fs::read_to_string(entry.path()).await?;
                         let metadata: FileMetadata = serde_json::from_str(&metadata_content)
-                            .map_err(|e| StorageError::Storage(format!("Failed to parse metadata: {}", e)))?;
+                            .map_err(|e| {
+                                StorageError::Storage(format!("Failed to parse metadata: {}", e))
+                            })?;
                         files.push(metadata);
                     }
                 }
@@ -268,73 +295,85 @@ impl DiskStorage {
 #[async_trait]
 impl StorageBackend for DiskStorage {
     async fn store_file(&self, name: &str, data: &[u8]) -> Result<FileMetadata> {
-        let id = Uuid::new_v4();
-        let file_type = FileTypeDetector::detect(data);
-        
-        let final_data = self.process_file_by_type(file_type.clone(), data).await?;
+        with_retry(&self.retry_config, || async {
+            let id = Uuid::new_v4();
+            let file_type = FileTypeDetector::detect(data);
 
-        
+            let final_data = self.process_file_by_type(file_type.clone(), data).await?;
 
-        let chunks = self.chunker.chunk_data(&final_data);
-        let chunk_ids = self.store_chunks(chunks).await?;
+            let chunks = self.chunker.chunk_data(&final_data);
+            let chunk_ids = self.store_chunks(chunks).await?;
 
-        // Create and store metadata
-        let metadata = FileMetadata {
-            id,
-            name: name.to_string(),
-            size: final_data.len() as u64,
-            created_at: Utc::now(),
-            modified_at: Utc::now(),
-            checksum: Self::calculate_checksum(&final_data),
-            file_type,
-            chunk_ids
-        };
+            // Create and store metadata
+            let metadata = FileMetadata {
+                id,
+                name: name.to_string(),
+                size: final_data.len() as u64,
+                created_at: Utc::now(),
+                modified_at: Utc::now(),
+                checksum: Self::calculate_checksum(&final_data),
+                file_type,
+                chunk_ids,
+            };
 
-        // Write metadata to file
-        let metadata_json = serde_json::to_string(&metadata)
-            .map_err(|e| StorageError::Storage(e.to_string()))?;
-        fs::write(self.get_metadata_path(&id), metadata_json).await?;
+            // Write metadata to file
+            let metadata_json = serde_json::to_string(&metadata)
+                .map_err(|e| StorageError::Storage(e.to_string()))?;
+            fs::write(self.get_metadata_path(&id), metadata_json).await?;
 
-        self.update_name_index(name, &id).await?;
+            self.update_name_index(name, &id).await?;
 
-        if let Some(cache) = &self.cache {
-            cache.put(id, final_data.clone()).await;
-        }
+            if let Some(cache) = &self.cache {
+                cache.put(id, final_data.clone()).await;
+            }
 
-        Ok(metadata)
+            Ok(metadata)
+        })
+        .await
     }
 
     async fn get_file(&self, id: &Uuid) -> Result<Vec<u8>> {
-        let metadata_path = self.get_metadata_path(id);
-        
-        if !metadata_path.exists() {
-            return Err(StorageError::NotFound(id.to_string()));
-        }
-
-        let metadata_content = fs::read_to_string(&metadata_path).await?;
-        let metadata: FileMetadata = serde_json::from_str(&metadata_content)
-            .map_err(|e| StorageError::Storage(format!("Failed to parse metadata: {}", e)))?;
-
-        // Read and combine chunks
-        let mut data = Vec::new();
-        for chunk_id in metadata.chunk_ids {
-            let chunk_path = self.get_chunk_path(&chunk_id);
-            let chunk_data = fs::read(&chunk_path).await?;
-            data.extend(chunk_data);
-        }
-
-        let final_data = self.deprocess_file_by_type(metadata.file_type, &data).await?;
-
         if let Some(cache) = &self.cache {
-            cache.put(*id, final_data.clone()).await; // Store the data in cache
+            if let Some(data) = cache.get(id).await {
+                return Ok(data);
+            }
         }
 
-        Ok(final_data)
+        with_retry(&self.retry_config, || async {
+            let metadata_path = self.get_metadata_path(id);
+
+            if !metadata_path.exists() {
+                return Err(StorageError::NotFound(id.to_string()));
+            }
+
+            let metadata_content = fs::read_to_string(&metadata_path).await?;
+            let metadata: FileMetadata = serde_json::from_str(&metadata_content)
+                .map_err(|e| StorageError::Storage(format!("Failed to parse metadata: {}", e)))?;
+
+            // Read and combine chunks
+            let mut data = Vec::new();
+            for chunk_id in metadata.chunk_ids {
+                let chunk_path = self.get_chunk_path(&chunk_id);
+                let chunk_data = fs::read(&chunk_path).await?;
+                data.extend(chunk_data);
+            }
+
+            let final_data = self
+                .deprocess_file_by_type(metadata.file_type, &data)
+                .await?;
+
+            if let Some(cache) = &self.cache {
+                cache.put(*id, final_data.clone()).await; // Store the data in cache
+            }
+
+            Ok(final_data)
+        })
+        .await
     }
 
     async fn delete_file(&self, id: &Uuid) -> Result<()> {
         let metadata_path = self.get_metadata_path(id);
-        
+
         // Check if file exists
         if !metadata_path.exists() {
             return Err(StorageError::NotFound(id.to_string()));
@@ -370,4 +409,3 @@ impl StorageBackend for DiskStorage {
         Ok(())
     }
 }
-
