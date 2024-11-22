@@ -16,7 +16,7 @@ use uuid::Uuid;
 use super::{
     cache::CacheManager,
     compression::CompressionManager,
-    retry::{with_retry, RetryConfig},
+    retry::{with_retry, RetryConfig}, validation::ValidationManager,
 };
 
 #[async_trait]
@@ -35,6 +35,7 @@ pub struct DiskStorage {
     cache: Option<CacheManager>,
     compression: Option<CompressionManager>,
     retry_config: RetryConfig,
+    validation: ValidationManager,
 }
 
 impl DiskStorage {
@@ -49,7 +50,7 @@ impl DiskStorage {
 
         let chunker = FileChunker::new(ChunkManager::default());
         Ok(Self {
-            base_path,
+            base_path: base_path.clone(),
             metadata_path,
             chunks_path,
             chunker,
@@ -57,6 +58,7 @@ impl DiskStorage {
             cache: None,
             compression: None,
             retry_config: RetryConfig::default(),
+            validation: ValidationManager::new(base_path),
         })
     }
 
@@ -315,6 +317,8 @@ impl StorageBackend for DiskStorage {
                 file_type,
                 chunk_ids,
             };
+
+            self.validation.validate_file(&metadata).await?;
 
             // Write metadata to file
             let metadata_json = serde_json::to_string(&metadata)
