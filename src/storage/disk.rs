@@ -127,7 +127,7 @@ impl DiskStorage {
             FileType::Document(_) => {
                 // Document deprocessing logic
                 // For example, text extraction, metadata parsing
-                self.process_data(data).await
+                self.deprocess_data(data).await
             }
             FileType::Video(_) => {
                 // Video deprocessing logic
@@ -335,7 +335,14 @@ impl StorageBackend for DiskStorage {
     async fn get_file(&self, id: &Uuid) -> Result<Vec<u8>> {
         if let Some(cache) = &self.cache {
             if let Some(data) = cache.get(id).await {
-                return Ok(data);
+                let metadata_path = self.get_metadata_path(id);
+                if !metadata_path.exists() {
+                    return Err(StorageError::NotFound(id.to_string()));
+                }
+                let metadata_content = fs::read_to_string(&metadata_path).await?;
+                let metadata: FileMetadata = serde_json::from_str(&metadata_content)
+                .map_err(|e| StorageError::Storage(format!("Failed to parse metadata: {}", e)))?;
+                return self.deprocess_file_by_type(metadata.file_type, &data).await;
             }
         }
 

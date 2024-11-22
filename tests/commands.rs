@@ -92,8 +92,9 @@ mod tests {
     async fn test_compression_and_encryption() {
         let (mut storage, _temp_dir) = create_test_storage().await;
         storage = storage
-            .with_encryption([1; 32])
-            .with_cache(100);
+            .with_encryption([0u8; 32])
+            .with_cache(100)
+            .with_compression(true);
 
         let file_data = b"Sensitive data.";
         let file_name = "secure.txt";
