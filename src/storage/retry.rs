@@ -15,6 +15,15 @@ impl Default for RetryConfig {
     }
 }
 
+impl RetryConfig {
+    pub fn new(max_retries: u32, initial_delay: Duration) -> Self {
+        Self {
+            max_retries,
+            initial_delay,
+        }
+    }
+}
+
 pub async fn with_retry<F, Fut, T>(config: &RetryConfig, operation: F) -> Result<T>
 where
     F: Fn() -> Fut,
@@ -28,8 +37,9 @@ where
             Err(e) => {
                 last_error = Some(e);
                 attempts += 1;
-                if attempts < config.max_retries {
-                    sleep(config.initial_delay * 2u32.pow(attempts)).await;
+                if attempts <= config.max_retries {
+                    sleep(config.initial_delay * 2u32.pow(attempts - 1)).await;
+                    println!("{:?}", config.initial_delay * 2u32.pow(attempts - 1));
                 }
             }
         }
