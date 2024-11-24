@@ -1,6 +1,6 @@
 use crate::{
     chunk::{ChunkManager, FileChunker},
-    crypto::encryption::EncryptionConfig,
+    crypto::encryption::EncryptionConfig, storage::progress::ProgressFormatter,
 };
 use crate::{Chunk, ChunkId, FileMetadata, FileType, FileTypeDetector, Result, StorageError};
 use async_trait::async_trait;
@@ -14,9 +14,7 @@ use tokio::fs;
 use uuid::Uuid;
 
 use super::{
-    cache::CacheManager,
-    compression::CompressionManager,
-    retry::{with_retry, RetryConfig}, validation::ValidationManager,
+    cache::CacheManager, compression::CompressionManager, progress::ProgressTracker, retry::{with_retry, RetryConfig}, validation::ValidationManager
 };
 
 #[async_trait]
@@ -35,7 +33,7 @@ pub struct DiskStorage {
     cache: Option<CacheManager>,
     compression: Option<CompressionManager>,
     retry_config: RetryConfig,
-    validation: ValidationManager,
+    progress_tracker: ProgressTracker,
 }
 
 impl DiskStorage {
@@ -50,7 +48,7 @@ impl DiskStorage {
 
         let chunker = FileChunker::new(ChunkManager::default());
         Ok(Self {
-            base_path: base_path.clone(),
+            base_path,
             metadata_path,
             chunks_path,
             chunker,
@@ -58,7 +56,7 @@ impl DiskStorage {
             cache: None,
             compression: None,
             retry_config: RetryConfig::default(),
-            validation: ValidationManager::new(base_path),
+            progress_tracker: ProgressTracker::new(),
         })
     }
 
@@ -297,11 +295,22 @@ impl DiskStorage {
 #[async_trait]
 impl StorageBackend for DiskStorage {
     async fn store_file(&self, name: &str, data: &[u8]) -> Result<FileMetadata> {
+        let operation_id = self.progress_tracker.start_operation(data.len() as u64).await;
+
         with_retry(&self.retry_config, || async {
             let id = Uuid::new_v4();
             let file_type = FileTypeDetector::detect(data);
 
             let final_data = self.process_file_by_type(file_type.clone(), data).await?;
+            // self.progress_tracker.update_progress(&operation_id, final_data.len() as u64).await;
+            // if let Some(progress) = self.progress_tracker.get_progress(&operation_id).await {
+            //     println!(
+            //         "Progress: {}, Speed: {}, Time remaining: {}",
+            //         progress.format_progress(),
+            //         progress.format_speed(),
+            //         progress.format_time_remaining()
+            //     );
+            // };
 
             let chunks = self.chunker.chunk_data(&final_data);
             let chunk_ids = self.store_chunks(chunks).await?;
@@ -318,7 +327,8 @@ impl StorageBackend for DiskStorage {
                 chunk_ids,
             };
 
-            self.validation.validate_file(&metadata).await?;
+            let validation = ValidationManager::new(self.base_path.clone());
+            validation.validate_file(&metadata).await?;
 
             // Write metadata to file
             let metadata_json = serde_json::to_string(&metadata)
@@ -331,6 +341,7 @@ impl StorageBackend for DiskStorage {
                 cache.put(id, final_data.clone()).await;
             }
 
+            self.progress_tracker.complete_operation(&operation_id).await;
             Ok(metadata)
         })
         .await
@@ -360,6 +371,10 @@ impl StorageBackend for DiskStorage {
             let metadata_content = fs::read_to_string(&metadata_path).await?;
             let metadata: FileMetadata = serde_json::from_str(&metadata_content)
                 .map_err(|e| StorageError::Storage(format!("Failed to parse metadata: {}", e)))?;
+
+
+            let validation = ValidationManager::new(self.base_path.clone());
+            validation.validate_file(&metadata).await?;
 
             // Read and combine chunks
             let mut data = Vec::new();
