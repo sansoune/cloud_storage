@@ -1,6 +1,5 @@
 use crate::{Result, StorageError, FileMetadata};
 use tokio::fs;
-use uuid::Uuid;
 use std::path::PathBuf;
 
 pub struct ValidationManager {
@@ -22,7 +21,7 @@ impl ValidationManager {
 
         let mut total_size = 0;
         for chunk_id in &metadata.chunk_ids {
-            let chunk_path = self.base_path.join("chunk").join(chunk_id.0.to_string());
+            let chunk_path = self.base_path.join("chunks").join(chunk_id.0.to_string());
             let metadata = fs::metadata(chunk_path).await?;
             total_size += metadata.len();
         }
