@@ -1,7 +1,10 @@
 /target
 /storage
+/src
 *.txt
 *.jpg
 *.JPG
 *.png
 *.pdf
+later.md
+code.zip

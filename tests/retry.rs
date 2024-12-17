@@ -3,7 +3,7 @@ mod tests {
 
     use std::sync::Arc;
     use std::io;
-    use cloud_storage::{storage::retry::{with_retry, RetryConfig}, StorageError, Result};
+    use cloud_storage::{storage::retry::{with_retry, RetryConfig}, AppError, Result, StorageError};
     use tokio::sync::Mutex;
     use std::time::Instant;
     use tokio::time::Duration;
@@ -29,10 +29,10 @@ mod tests {
             if *attempts > self.success_after {
                 Ok(success_value.to_string())
             } else {
-                Err(StorageError::Io(io::Error::new(
+                Err(cloud_storage::AppError::Storage(StorageError::Io(io::Error::new(
                     io::ErrorKind::Other,
                     format!("{} (Attempt {})", self.error_message, *attempts)
-                )))
+                ))))
             }
         }
 
@@ -131,14 +131,14 @@ mod tests {
                 let mut attempts = counter.lock().await;
                 *attempts += 1;
                 match *attempts {
-                    1 => Err(StorageError::Io(io::Error::new(
+                    1 => Err(AppError::Storage( StorageError::Io(io::Error::new(
                         io::ErrorKind::TimedOut,
                         "Timeout error"
-                    ))),
-                    2 => Err(StorageError::Io(io::Error::new(
+                    )))),
+                    2 => Err(AppError::Storage(StorageError::Io(io::Error::new(
                         io::ErrorKind::ConnectionReset,
                         "Connection reset"
-                    ))),
+                    )))),
                     _ => Ok("Success!")
                 }
             }

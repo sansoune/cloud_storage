@@ -1,0 +1,108 @@
+syntax = "proto3";
+
+package brain_service;
+
+// Service for managing distributed components
+service BrainService {
+    // Register a new component in the system
+    rpc RegisterComponent(ComponentRegistration) returns (RegistrationResponse) {}
+    
+    // Unregister a component
+    rpc UnregisterComponent(UnregistrationRequest) returns (UnregistrationResponse) {}
+    
+    // Route a message between components
+    rpc RouteMessage(MessageRouteRequest) returns (MessageRouteResponse) {}
+    
+    // Get system status
+    rpc GetSystemStatus(SystemStatusRequest) returns (SystemStatusResponse) {}
+}
+
+// Component registration details
+message ComponentRegistration {
+    string component_id = 1;
+    ComponentType component_type = 2;
+    string ip_address = 3;
+    int32 port = 4;
+}
+
+// Component registration response
+message RegistrationResponse {
+    bool success = 1;
+    string system_id = 2;
+    string error_message = 3;
+}
+
+// Component unregistration request
+message UnregistrationRequest {
+    string component_id = 1;
+}
+
+// Component unregistration response
+message UnregistrationResponse {
+    bool success = 1;
+    string error_message = 2;
+}
+
+// Message routing request
+message MessageRouteRequest {
+    string source_component = 1;
+    string destination_component = 2;
+    bytes payload = 3;
+    MessageType message_type = 4;
+}
+
+// Message routing response
+message MessageRouteResponse {
+    bool success = 1;
+    string error_message = 2;
+}
+
+// System status request
+message SystemStatusRequest {}
+
+// Detailed system status
+message SystemStatusResponse {
+    string system_id = 1;
+    repeated ComponentInfo registered_components = 2;
+    SystemHealth overall_health = 3;
+}
+
+// Component information
+message ComponentInfo {
+    string component_id = 1;
+    ComponentType component_type = 2;
+    string ip_address = 3;
+    int32 port = 4;
+    ComponentStatus status = 5;
+}
+
+// Enum for component types
+enum ComponentType {
+    STORAGE_ENGINE = 0;
+    SERVER = 1;
+    CLI = 2;
+    UNKNOWN = 3;
+}
+
+// Enum for component status
+enum ComponentStatus {
+    RUNNING = 0;
+    STOPPED = 1;
+    ERROR = 2;
+}
+
+// Enum for message types
+enum MessageType {
+    STORAGE_REQUEST = 0;
+    STORAGE_RESPONSE = 1;
+    SERVER_COMMAND = 2;
+    CLI_COMMAND = 3;
+    SYSTEM_CONTROL = 4;
+}
+
+// Enum for system health
+enum SystemHealth {
+    HEALTHY = 0;
+    DEGRADED = 1;
+    CRITICAL = 2;
+}

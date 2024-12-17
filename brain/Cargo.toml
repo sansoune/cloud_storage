@@ -1,0 +1,19 @@
+[package]
+name = "brain"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+common = { path = "../common" }
+storage_engine = { path = "../storage_engine" }
+server = { path = "../server" }
+tokio = {version = "1.41.1", features = ["full"] }
+uuid = {version = "1.11.0", features = ["v4", "serde"] }
+tonic = { version = "0.12.3", features = ["codegen", "prost"] }
+prost = "0.13.4"
+tracing = "0.1.41"
+tracing-subscriber = "0.3.19"
+tonic-reflection = "0.12.3"
+
+[build-dependencies]
+tonic-build = "0.12.3"

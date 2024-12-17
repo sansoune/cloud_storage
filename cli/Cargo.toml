@@ -1,0 +1,15 @@
+[package]
+name = "cli"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+clap = {version = "4.5.20", features = ["derive"] }
+tokio.workspace = true
+tonic = "0.12.3"
+uuid = {version = "1.11.0", features = ["v4", "serde"] }
+common = { path = "../common" }
+
+[[bin]]
+name = "storage-cli"
+path = "src/main.rs"
