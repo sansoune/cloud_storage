@@ -1,5 +1,6 @@
 use std::{collections::HashMap, error::Error, sync::Arc};
 
+use base64::Engine;
 use brain::managers::storage_manager::StorageManager;
 use tokio::sync::Mutex;
 use tonic::{transport::Server, Request, Response, Status};
@@ -199,16 +200,17 @@ impl  BrainServiceImpl {
     async fn handle_storage_message(&self, message: &MessageRouteRequest,) -> Result<MessageRouteResponse, Status> {
         let payload = &message.payload;
         let command = String::from_utf8(payload.to_vec()).map_err(|_| Status::invalid_argument("Invalid payload"))?;
-        let parts: Vec<&str> = command.splitn(2, ' ').collect();
+        let parts: Vec<&str> = command.splitn(3, ' ').collect();
         let operation = parts[0];
+        println!("{}", operation);
 
         let mut response = MessageRouteResponse{
             success: true,
             error_message: String::new(),
         };
 
-        match operation {
-            "list" => {
+        match (operation, parts.get(1), parts.get(2)) {
+            ("list", None, None) => {
                 match self.storage.list_files().await {
                     Ok(files) => {
                         let file_list: Vec<String> = files.iter().map(|f| format!("{}: {}", f.id, f.name)).collect();
@@ -217,6 +219,25 @@ impl  BrainServiceImpl {
                     Err(e) => {
                         response.success = false;
                         response.error_message = format!("List failed: {}", e);
+                    }
+                }
+            }
+            ("upload", Some(file_name), Some(data)) => {
+                match base64::prelude::BASE64_STANDARD.decode(data) {
+                    Ok(file_content) => {
+                        match self.storage.upload_file(file_name, &file_content).await {
+                            Ok(file_id) => {
+                                response.error_message = format!("File uploaded successfully. File ID: {}", file_id.id);
+                            }
+                            Err(e) => {
+                                response.success = false;
+                                response.error_message = format!("Upload failed: {}", e);
+                            }
+                        }
+                    }
+                    Err(_) => {
+                        response.success = false;
+                        response.error_message = "Invalid base64 content".to_string();
                     }
                 }
             }

@@ -346,8 +346,10 @@ dependencies = [
 name = "brain"
 version = "0.1.0"
 dependencies = [
+ "base64",
  "common",
  "prost",
+ "serde_json",
  "server",
  "storage_engine",
  "tokio",
@@ -489,6 +491,7 @@ checksum = "f46ad14479a25103f283c0f10005961cf086d8dc42205bb44c46ac563475dca6"
 name = "cli"
 version = "0.1.0"
 dependencies = [
+ "base64",
  "clap",
  "common",
  "tokio",
@@ -504,6 +507,7 @@ dependencies = [
  "anyhow",
  "assert_cmd",
  "async-trait",
+ "base64",
  "blake3",
  "chrono",
  "clap",

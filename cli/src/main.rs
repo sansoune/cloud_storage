@@ -1,6 +1,8 @@
 use clap::{Parser, Subcommand};
 use tonic::{Request, Status, transport::Channel};
 use std::error::Error;
+use base64::prelude::*;
+use std::fs;
 use std::path::{Path, PathBuf};
 use uuid::Uuid;
 use common::brain_service;
@@ -125,6 +127,23 @@ impl StorageCli {
             Err(response_inner.error_message.into())
         }
     }
+
+    async fn upload_file(&mut self, file_path: &Path) -> Result<String, Box<dyn Error>> {
+        if !file_path.exists() {
+            return Err(format!("File not found: {}", file_path.display()).into());
+        }
+
+        let file_data = fs::read(&file_path)?;
+
+        let filename = file_path.file_name().ok_or("Invalid filename")?.to_str().ok_or("Invalid filename")?;
+        let encoded_data = BASE64_STANDARD.encode(&file_data);
+
+        let command = format!("upload {} {}", filename, encoded_data);
+
+        let result = self.send_storage_command(command).await?;
+        
+        Ok(result)
+    }
 }
 
 #[tokio::main]
@@ -134,8 +153,9 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
     match cli.command {
         Commands::Upload { file } => {
-            // storage_cli.upload_file(&file).await?;
-            println!("uopload commabd");
+            let result = storage_cli.upload_file(&file).await?;
+            println!("{}", result);
+
         },
         Commands::Download { file_id, file_name, output } => {
             println!("download commabd");
