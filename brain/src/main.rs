@@ -7,10 +7,6 @@ use tonic::{transport::Server, Request, Response, Status};
 use tracing::{info, warn};
 use common::brain_service::{self, MessageType};
 
-// mod brain_service {
-//     tonic::include_proto!("brain_service");
-//     pub (crate) const FILE_DESCRIPTOR_SET: &[u8] = tonic::include_file_descriptor_set!("communication_descriptor");
-// }
 
 use brain_service::{
     brain_service_server::{BrainService, BrainServiceServer},
@@ -271,6 +267,45 @@ impl  BrainServiceImpl {
                             Err(e) => {
                                 response.success = false;
                                 response.error_message = format!("Download failed: {}", e);
+                            }
+                        }
+                    }
+                    _ => {
+                        response.success = false;
+                        response.error_message = "Invalid download identifier type".to_string();
+                    }
+                }
+            }
+            ("delete", Some(param_type), Some(param)) => {
+                match param_type {
+                    "id" => {
+                        match self.storage.delete_file(&Uuid::parse_str(param).unwrap()).await {
+                            Ok(_) => {
+                                response.error_message = format!("File with ID {} deleted", param);
+                            }
+                            Err(e) => {
+                                response.success = false;
+                                response.error_message = format!("Delete failed: {}", e);
+                            }
+                        }
+                    }
+                    "name" => {
+                        let index_path = PathBuf::from("./storage/name_to_id.json");
+                        if !index_path.exists() {
+                            return Err(Status::not_found("index file not found"));
+                        }
+                        
+                        let content = tokio::fs::read_to_string(&index_path).await?;
+                        let index: HashMap<String, Uuid> = serde_json::from_str(&content).map_err(|e:  serde_json::Error| Status::not_found(format!("failed to parse index {}", e))).unwrap();
+                        let id = index.get(param).cloned().ok_or_else(|| Status::not_found(format!("file {} not found", param)))?;
+
+                        match self.storage.delete_file(&id).await {
+                            Ok(_) => {
+                                response.error_message = format!("File with ID {} deleted", id);
+                            }
+                            Err(e) => {
+                                response.success = false;
+                                response.error_message = format!("Delete failed: {}", e);
                             }
                         }
                     }

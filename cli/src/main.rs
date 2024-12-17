@@ -1,7 +1,6 @@
 use clap::{Parser, Subcommand};
-use tonic::{Request, Status, transport::Channel};
+use tonic::{Request, transport::Channel};
 use std::error::Error;
-use std::fmt::format;
 use base64::prelude::*;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -154,6 +153,13 @@ impl StorageCli {
 
         Ok(format!("File downloaded to {}", output.display()))
     }
+
+    async fn delete_file(&mut self, parameter_type: &str, parameter: String)  -> Result<String, Box<dyn Error>> {
+        let command = format!("delete {} {}", parameter_type, parameter);
+        let result = self.send_storage_command(command).await?;
+
+        Ok(result)
+    }
 }
 
 #[tokio::main]
@@ -180,7 +186,12 @@ async fn main() -> Result<(), Box<dyn Error>> {
             println!("{}", result);
         },
         Commands::Delete { file_id, file_name } => {
-            println!("delete commabd");
+            let result = match (file_id, file_name) {
+                (Some(id), _) => storage_cli.delete_file("id", id).await?,
+                (None, Some(name)) => storage_cli.delete_file("name", name).await?,
+                _ => return Err("Either file ID or file name must be provided".into()),
+            };
+            println!("{}", result);
         },
     }
     
