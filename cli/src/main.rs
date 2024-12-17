@@ -1,6 +1,7 @@
 use clap::{Parser, Subcommand};
 use tonic::{Request, Status, transport::Channel};
 use std::error::Error;
+use std::fmt::format;
 use base64::prelude::*;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -144,6 +145,15 @@ impl StorageCli {
         
         Ok(result)
     }
+
+    async fn download_file(&mut self, parameter_type: &str, parameter: String, output: PathBuf) -> Result<String, Box<dyn Error>> {
+        let command = format!("download {} {}", parameter_type, parameter);
+        let result = self.send_storage_command(command).await?;
+        let decoded_data = BASE64_STANDARD.decode(&result)?;
+        fs::write(&output, decoded_data)?;
+
+        Ok(format!("File downloaded to {}", output.display()))
+    }
 }
 
 #[tokio::main]
@@ -158,7 +168,12 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
         },
         Commands::Download { file_id, file_name, output } => {
-            println!("download commabd");
+            let result = match (file_id, file_name) {
+                (Some(id), _) => storage_cli.download_file("id", id, output).await?,
+                (None, Some(name)) => storage_cli.download_file("name", name, output).await?,
+                _ => return Err("Either file ID or file name must be provided".into()),
+            };
+            println!("{}", result);
         },
         Commands::List => {
             let result = storage_cli.send_storage_command("list".to_string()).await?;

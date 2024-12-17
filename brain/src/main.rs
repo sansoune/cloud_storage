@@ -1,4 +1,4 @@
-use std::{collections::HashMap, error::Error, sync::Arc};
+use std::{collections::HashMap, error::Error, path::PathBuf, sync::Arc};
 
 use base64::Engine;
 use brain::managers::storage_manager::StorageManager;
@@ -209,7 +209,7 @@ impl  BrainServiceImpl {
             error_message: String::new(),
         };
 
-        match (operation, parts.get(1), parts.get(2)) {
+        match (operation, parts.get(1).copied(), parts.get(2).copied()) {
             ("list", None, None) => {
                 match self.storage.list_files().await {
                     Ok(files) => {
@@ -238,6 +238,45 @@ impl  BrainServiceImpl {
                     Err(_) => {
                         response.success = false;
                         response.error_message = "Invalid base64 content".to_string();
+                    }
+                }
+            }
+            ("download", Some(param_type), Some(param)) => {
+                match param_type {
+                    "id" => {
+                        match self.storage.download_file(&Uuid::parse_str(param).unwrap()).await {
+                            Ok(file_contents) => {
+                                response.error_message = base64::prelude::BASE64_STANDARD.encode(&file_contents);
+                            }
+                            Err(e) => {
+                                response.success = false;
+                                response.error_message = format!("Download failed: {}", e);
+                            }
+                        }
+                    }
+                    "name" => {
+                        let index_path = PathBuf::from("./storage/name_to_id.json");
+                        if !index_path.exists() {
+                            return Err(Status::not_found("index file not found"));
+                        }
+                        
+                        let content = tokio::fs::read_to_string(&index_path).await?;
+                        let index: HashMap<String, Uuid> = serde_json::from_str(&content).map_err(|e:  serde_json::Error| Status::not_found(format!("failed to parse index {}", e))).unwrap();
+                        let id = index.get(param).cloned().ok_or_else(|| Status::not_found(format!("file {} not found", param)))?;
+
+                        match self.storage.download_file(&id).await {
+                            Ok(file_contents) => {
+                                response.error_message = base64::prelude::BASE64_STANDARD.encode(&file_contents);
+                            }
+                            Err(e) => {
+                                response.success = false;
+                                response.error_message = format!("Download failed: {}", e);
+                            }
+                        }
+                    }
+                    _ => {
+                        response.success = false;
+                        response.error_message = "Invalid download identifier type".to_string();
                     }
                 }
             }
