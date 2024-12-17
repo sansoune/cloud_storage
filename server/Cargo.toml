@@ -4,6 +4,17 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-tokio = {version = "1.41.1", features = ["full"] }
+tokio = { version = "1.41.1", features = ["full"] }
+common = { path = "../common" }
 storage_engine = { path = "../storage_engine" }
 tracing = "0.1.40"
+rocket = {version = "0.5.1", features=["json"]}
+tonic = "0.12.3"
+uuid = "1.11.0"
+base64 = "0.22.1"
+serde.workspace = true
+
+
+[[bin]]
+name = "api_server"
+path = "src/main.rs"

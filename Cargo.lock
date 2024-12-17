@@ -1892,6 +1892,7 @@ dependencies = [
  "rocket_codegen",
  "rocket_http",
  "serde",
+ "serde_json",
  "state",
  "tempfile",
  "time",
@@ -2047,9 +2048,15 @@ dependencies = [
 name = "server"
 version = "0.1.0"
 dependencies = [
+ "base64",
+ "common",
+ "rocket",
+ "serde",
  "storage_engine",
  "tokio",
+ "tonic",
  "tracing",
+ "uuid",
 ]
 
 [[package]]

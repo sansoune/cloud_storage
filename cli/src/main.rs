@@ -71,14 +71,14 @@ impl StorageCli {
 
         let mut client = BrainServiceClient::connect(format!("http://{}", server_address)).await?;
 
-        let resuest = Request::new(ComponentRegistration {
+        let request = Request::new(ComponentRegistration {
             component_id: component_id.clone(),
             component_type: ComponentType::Cli as i32,
             ip_address: "127.0.0.1".to_string(),
             port: 0,
         });
 
-        let response = client.register_component(resuest).await?;
+        let response = client.register_component(request).await?;
         let response_inner = response.into_inner();
 
         if !response_inner.success {
