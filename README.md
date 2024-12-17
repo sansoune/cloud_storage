@@ -3,9 +3,7 @@
 ## Features
 - Secure file storage
 - CLI-based management
-- Rocket web backend
 - Configurable storage locations
-- Basic authentication
 
 ## Prerequisites
 - Rust 1.75 or later
@@ -24,22 +22,22 @@ cargo build --release
 
 ### Start Server
 ```bash
-cargo run -- start
+cargo run --bin brain
 ```
 
 ### Upload File
 ```bash
-cargo run -- upload -f /path/to/file
+cargo run --bin storage-cli upload -f /path/to/file
 ```
 
 ### List Files
 ```bash
-cargo run -- list
+cargo run --bin storage-cli list
 ```
 
 ### Download File
 ```bash
-cargo run -- download -n filename -o output_file
+cargo run --bin storage-cli download -n filename -o output_file
 ```
 
 

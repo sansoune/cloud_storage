@@ -239,7 +239,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     Server::builder()
     .add_service(reflection)
     .add_service(BrainServiceServer::new(brain_service)).serve(addr).await?;
-    let storage = StorageManager::new("./storage");
 
     
     Ok(())
