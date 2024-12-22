@@ -7,7 +7,7 @@ use rocket::{
 use std::error::Error;
 use std::sync::Arc;
 use tokio::sync::Mutex;
-use tonic::{transport::Channel, Request};
+use tonic::{client, transport::Channel, Request};
 use uuid::Uuid;
 
 use brain_service::{
@@ -135,6 +135,26 @@ async fn list_files(state: &State<AppState>) -> Json<StorageResponse> {
     }
 }
 
+#[post("/storage/upload", format = "json", data = "<upload_request>")]
+async fn upload_files(state: &State<AppState>, upload_request: Json<StorageUploadRequest>) -> Json<StorageResponse> {
+    let mut client = state.client.lock().await;
+
+    let command = format!("upload {} {}", upload_request.file_name, upload_request.file_content);
+
+    let component_id = client.component_id.clone();
+
+    match client.route_message(component_id, "brain", command, MessageType::StorageRequest).await {
+        Ok(response) => Json(StorageResponse {
+            success: response.success,
+            message: response.error_message,
+        }),
+        Err(e) => Json(StorageResponse {
+            success: false,
+            message: format!("Error uploading file: {}", e),
+        })
+    }
+}
+
 #[rocket::main]
 async fn main() -> Result<(), rocket::Error> {
     let client = ApiServer::new()
@@ -148,7 +168,7 @@ async fn main() -> Result<(), rocket::Error> {
 
     let rocket = rocket::build()
         .manage(app_state)
-        .mount("/", routes![index, list_files])
+        .mount("/", routes![index, list_files, upload_files])
         .attach(rocket::fairing::AdHoc::on_shutdown(
             "Unregister Component",
             move |_| {

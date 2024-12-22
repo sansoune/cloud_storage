@@ -1,6 +1,6 @@
 /target
 /storage
-/src
+*.sh
 *.txt
 *.jpg
 *.JPG
