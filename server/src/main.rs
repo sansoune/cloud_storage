@@ -7,7 +7,7 @@ use rocket::{
 use std::error::Error;
 use std::sync::Arc;
 use tokio::sync::Mutex;
-use tonic::{client, transport::Channel, Request};
+use tonic::{transport::Channel, Request};
 use uuid::Uuid;
 
 use brain_service::{
@@ -136,7 +136,7 @@ async fn list_files(state: &State<AppState>) -> Json<StorageResponse> {
 }
 
 #[post("/storage/upload", format = "json", data = "<upload_request>")]
-async fn upload_files(state: &State<AppState>, upload_request: Json<StorageUploadRequest>) -> Json<StorageResponse> {
+async fn upload_file(state: &State<AppState>, upload_request: Json<StorageUploadRequest>) -> Json<StorageResponse> {
     let mut client = state.client.lock().await;
 
     let command = format!("upload {} {}", upload_request.file_name, upload_request.file_content);
@@ -155,6 +155,49 @@ async fn upload_files(state: &State<AppState>, upload_request: Json<StorageUploa
     }
 }
 
+#[derive(Debug)]
+enum DownloadIdentifier {
+    Id(String),
+    Name(String),
+}
+
+impl<'r> rocket::request::FromParam<'r> for DownloadIdentifier {
+    type Error = &'static str;
+
+    fn from_param(param: &'r str) -> Result<Self, Self::Error> {
+        if let Some(name) = param.strip_prefix("name:") {
+            Ok(DownloadIdentifier::Name(name.to_string()))
+        }else if let Some(id) = param.strip_prefix("id:") {
+            Ok(DownloadIdentifier::Id(id.to_string()))
+        }else {
+            Ok(DownloadIdentifier::Id(param.to_string()))
+        }
+    }
+}
+
+#[get("/storage/download/<identifier>")]
+async fn download_file(state: &State<AppState>, identifier: DownloadIdentifier) -> Json<StorageResponse> {
+    let mut client = state.client.lock().await;
+
+    let command = match identifier {
+        DownloadIdentifier::Id(id) => format!("download id {}", id),
+        DownloadIdentifier::Name(name) => format!("download name {}", name),
+    };
+
+    let component_id = client.component_id.clone();
+
+    match client.route_message(component_id, "brain", command, MessageType::StorageRequest).await {
+        Ok(response) => Json(StorageResponse {
+            success: response.success,
+            message: response.error_message,
+        }),
+        Err(e) => Json(StorageResponse {
+            success: false,
+            message: format!("Error downloading file: {}", e),
+        })
+    }
+}
+
 #[rocket::main]
 async fn main() -> Result<(), rocket::Error> {
     let client = ApiServer::new()
@@ -168,7 +211,7 @@ async fn main() -> Result<(), rocket::Error> {
 
     let rocket = rocket::build()
         .manage(app_state)
-        .mount("/", routes![index, list_files, upload_files])
+        .mount("/", routes![index, list_files, upload_file, download_file])
         .attach(rocket::fairing::AdHoc::on_shutdown(
             "Unregister Component",
             move |_| {
