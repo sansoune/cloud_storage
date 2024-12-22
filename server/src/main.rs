@@ -156,32 +156,55 @@ async fn upload_file(state: &State<AppState>, upload_request: Json<StorageUpload
 }
 
 #[derive(Debug)]
-enum DownloadIdentifier {
+enum Identifier {
     Id(String),
     Name(String),
 }
 
-impl<'r> rocket::request::FromParam<'r> for DownloadIdentifier {
+impl<'r> rocket::request::FromParam<'r> for Identifier {
     type Error = &'static str;
 
     fn from_param(param: &'r str) -> Result<Self, Self::Error> {
         if let Some(name) = param.strip_prefix("name:") {
-            Ok(DownloadIdentifier::Name(name.to_string()))
+            Ok(Identifier::Name(name.to_string()))
         }else if let Some(id) = param.strip_prefix("id:") {
-            Ok(DownloadIdentifier::Id(id.to_string()))
+            Ok(Identifier::Id(id.to_string()))
         }else {
-            Ok(DownloadIdentifier::Id(param.to_string()))
+            Ok(Identifier::Id(param.to_string()))
         }
     }
 }
 
 #[get("/storage/download/<identifier>")]
-async fn download_file(state: &State<AppState>, identifier: DownloadIdentifier) -> Json<StorageResponse> {
+async fn download_file(state: &State<AppState>, identifier: Identifier) -> Json<StorageResponse> {
     let mut client = state.client.lock().await;
 
     let command = match identifier {
-        DownloadIdentifier::Id(id) => format!("download id {}", id),
-        DownloadIdentifier::Name(name) => format!("download name {}", name),
+        Identifier::Id(id) => format!("download id {}", id),
+        Identifier::Name(name) => format!("download name {}", name),
+    };
+
+    let component_id = client.component_id.clone();
+
+    match client.route_message(component_id, "brain", command, MessageType::StorageRequest).await {
+        Ok(response) => Json(StorageResponse {
+            success: response.success,
+            message: response.error_message,
+        }),
+        Err(e) => Json(StorageResponse {
+            success: false,
+            message: format!("Error downloading file: {}", e),
+        })
+    }
+}
+
+#[post("/storage/delete/<identifier>")]
+async fn delete_file(state: &State<AppState>, identifier: Identifier) -> Json<StorageResponse> {
+    let mut client = state.client.lock().await;
+
+    let command = match identifier {
+        Identifier::Id(id) => format!("delete id {}", id),
+        Identifier::Name(name) => format!("delete name {}", name),
     };
 
     let component_id = client.component_id.clone();
@@ -211,7 +234,7 @@ async fn main() -> Result<(), rocket::Error> {
 
     let rocket = rocket::build()
         .manage(app_state)
-        .mount("/", routes![index, list_files, upload_file, download_file])
+        .mount("/", routes![index, list_files, upload_file, download_file, delete_file])
         .attach(rocket::fairing::AdHoc::on_shutdown(
             "Unregister Component",
             move |_| {
